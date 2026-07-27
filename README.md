@@ -1,217 +1,131 @@
-#!/usr/bin/env pwsh
-<#
-.SYNOPSIS
-    Chrome 扩展自动化测试脚本
-    自动检测扩展是否安装、点击测试、API 调用验证
-#>
+# auto-develop-game-skill
 
-param(
-    [string]$ExtensionId = "",
-    [string]$TestPage = "http://localhost:3000",
-    [switch]$Headless = $false
-)
+> Claude Code 手游全自动基础架构搭建技能 —— 一句话让 AI 帮你从零搭建可上线卡牌手游。
 
-$ErrorActionPreference = "Stop"
+## 这是什么
 
-Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  Chrome 扩展自动化测试" -ForegroundColor Cyan
-Write-Host "============================================" -ForegroundColor Cyan
+一套给 Claude Code 用的 Skill 文件包。包含了从卡牌分类数据、游戏引擎提示词、UI 引擎提示词、自动化脚本、CI/CD 流水线到运维监控栈的完整技术方案。Claude 读完之后就能自动完成以下工作：
 
-# 1. 检测 Chrome 安装
-Write-Host "`n[1/5] 检测 Chrome 安装..." -ForegroundColor Yellow
-$chromePaths = @(
-    "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
-    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
-    "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"
-)
+- 搭建 Unity / Python / H5 三套游戏引擎
+- 生成 FairyGUI / UGUI / HTML+CSS 三套 UI
+- 一键安装 Python / Node / Docker 全栈依赖
+- 配置 GitHub Actions 自动构建与测试
+- 部署 ELK + Grafana 运维监控栈
 
-$chromePath = $null
-foreach ($path in $chromePaths) {
-    if (Test-Path $path) {
-        $chromePath = $path
-        Write-Host "  ✅ 找到 Chrome: $chromePath" -ForegroundColor Green
-        break
-    }
-}
+## 目录结构
 
-if (-not $chromePath) {
-    Write-Host "  ❌ 未找到 Chrome，尝试 Edge..." -ForegroundColor Red
-    $chromePath = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-    if (-not (Test-Path $chromePath)) {
-        Write-Host "  ❌ 未找到任何 Chromium 浏览器" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  ✅ 使用 Edge: $chromePath" -ForegroundColor Green
-}
+```
+├── skill/                    # Claude Code Skill 定义（核心入口）
+│   └── SKILL.md
+├── prompts/                  # AI 提示词库（32 份，按子系统分类）
+│   ├── 01-engine/            # 引擎集成（FairyGUI、Unity 双引擎、渲染）
+│   ├── 02-ui/                # UI 引擎（FairyGUI 自动操作、设计系统）
+│   ├── 03-gameplay/          # 核心玩法（卡牌逻辑、联机、后端）
+│   ├── 04-build/             # 构建打包（Android/iOS/WebGL）
+│   ├── 05-ops/               # 运维部署（后端服务、Docker、监控）
+│   ├── 06-quality/           # 质量门禁（测试、CI/CD、修复诊断）
+│   └── 07-master/            # 整合主控（技术栈全景、集成方案）
+├── config/                   # 手游配置体系
+│   ├── card-library/         # 卡牌分类库（6 个 JSON，零依赖）
+│   │   ├── card-types.json   #   30 张卡牌类型定义
+│   │   ├── heroes.json       #   23 角色 + 5 阵营
+│   │   ├── skills-taxonomy.json  #   37 技能完整描述
+│   │   ├── camps.json        #   阵营元数据
+│   │   ├── game-rules.json   #   对局规则（身份/阶段/牌堆）
+│   │   └── card-data-schema.json #   JSON Schema 校验
+│   ├── design-tokens/        # 三引擎统一设计变量
+│   └── build-profiles/       # 开发/预发布/生产三套构建配置
+├── scripts/                  # 自动化脚本（10 个）
+│   ├── install/              # 环境安装（Python/Node/Docker/Unity 验证）
+│   ├── automation/           # 浏览器测试、FairyGUI 发布、设计校验
+│   └── build/                # 构建脚本
+├── codebase/                 # 核心代码
+│   └── BuildScript.cs        # Unity BuildPipeline 自动化构建
+├── verification/             # 验证门禁 HTML
+└── docs/                     # 项目文档
+```
 
-# 2. 检查扩展是否安装
-Write-Host "`n[2/5] 检查扩展安装状态..." -ForegroundColor Yellow
-$extensionsDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Extensions"
-if (-not (Test-Path $extensionsDir)) {
-    Write-Host "  ⚠ 扩展目录不存在，尝试 Edge..." -ForegroundColor Yellow
-    $extensionsDir = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Extensions"
-}
+## 快速开始
 
-$installed = $false
-if (Test-Path $extensionsDir) {
-    $extFolders = Get-ChildItem $extensionsDir -Directory | ForEach-Object {
-        $manifestPath = "$($_.FullName)\*\manifest.json"
-        $manifests = Get-ChildItem $manifestPath -ErrorAction SilentlyContinue
-        if ($manifests) {
-            foreach ($m in $manifests) {
-                try {
-                    $json = Get-Content $m.FullName -Raw | ConvertFrom-Json
-                    [PSCustomObject]@{
-                        Id = $_.Name
-                        Name = $json.name
-                        Version = $json.version
-                        Path = $_.FullName
-                    }
-                } catch {}
-            }
-        }
-    }
-    
-    if ($extFolders) {
-        $installed = $true
-        $extFolders | Format-Table -AutoSize
-        Write-Host "  ✅ 找到 $($extFolders.Count) 个扩展" -ForegroundColor Green
-    }
-}
+### 1. 给 Claude Code 用
 
-if (-not $installed) {
-    Write-Host "  ❌ 未找到已安装的扩展" -ForegroundColor Red
-    exit 1
-}
+把 `skill/SKILL.md` 的内容复制给 Claude Code，然后说：
 
-# 3. 启动 Chrome DevTools Protocol 测试
-Write-Host "`n[3/5] 启动浏览器调试模式..." -ForegroundColor Yellow
+```
+帮我搭建手游基础架构，目标平台 Android + WebGL
+```
 
-$userDataDir = "$env:TEMP\chrome-test-profile"
-$debugPort = 9222
+Claude 会自动执行全部流程。
 
-# 检查是否已有调试实例
-$existing = Get-Process chrome -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Host "  ⚠ Chrome 已在运行，尝试连接现有实例..." -ForegroundColor Yellow
-}
+### 2. 手动安装依赖
 
-$argList = @(
-    "--remote-debugging-port=$debugPort",
-    "--user-data-dir=`"$userDataDir`"",
-    "--no-first-run",
-    "--no-default-browser-check"
-)
-if ($Headless) {
-    $argList += "--headless"
-}
+```bat
+scripts\install\install-all.bat
+```
 
-$proc = Start-Process -FilePath $chromePath -ArgumentList $argList -PassThru -WindowStyle Minimized
-Start-Sleep -Seconds 3
+### 3. 只看卡牌数据
 
-# 4. CDP API 自动化操作
-Write-Host "`n[4/5] CDP 自动化操作..." -ForegroundColor Yellow
+```bash
+cat config/card-library/card-types.json   # 30 张卡牌
+cat config/card-library/heroes.json       # 23 个角色
+cat config/card-library/skills-taxonomy.json  # 37 个技能
+```
 
-$cdpScript = @"
-const CDP = require('chrome-remote-interface');
-const fs = require('fs');
+## 技术全景
 
-(async () => {
-    let client;
-    try {
-        client = await CDP({ port: $debugPort });
-        const { Page, Runtime, Network } = client;
-        
-        await Page.enable();
-        await Runtime.enable();
-        await Network.enable();
-        
-        // 导航到测试页面
-        console.log('⏳ 导航到测试页面: $TestPage');
-        await Page.navigate({ url: '$TestPage' });
-        await Page.loadEventFired();
-        console.log('✅ 页面加载完成');
-        
-        // 检测扩展注入
-        const injected = await Runtime.evaluate({
-            expression: `
-                (() => {
-                    // 检测扩展是否注入了全局变量或 DOM 元素
-                    const extIndicators = [];
-                    if (window.marvis_browser) extIndicators.push('marvis_browser global');
-                    if (document.querySelector('[data-extension-id]')) extIndicators.push('DOM marker found');
-                    return { indicators: extIndicators, url: window.location.href };
-                })()
-            `
-        });
-        console.log('扩展指示器:', JSON.stringify(injected.result.value));
-        
-        // 模拟点击扩展按钮
-        const clickResult = await Runtime.evaluate({
-            expression: `
-                (() => {
-                    const btn = document.querySelector('[data-action="test-extension"]');
-                    if (btn) {
-                        btn.click();
-                        return { clicked: true, element: btn.outerHTML };
-                    }
-                    return { clicked: false, available: Array.from(document.querySelectorAll('*')).slice(0,10).map(e => e.tagName) };
-                })()
-            `
-        });
-        console.log('点击结果:', JSON.stringify(clickResult.result.value));
-        
-        // 获取控制台输出
-        const consoleOutput = [];
-        Runtime.consoleAPICalled((params) => {
-            consoleOutput.push(params.args.map(a => a.value).join(' '));
-        });
-        
-        await new Promise(r => setTimeout(r, 2000));
-        console.log('控制台输出:', consoleOutput);
-        
-        const passed = injected.result.value.indicators.length > 0;
-        console.log(passed ? '✅ 扩展测试通过' : '❌ 扩展测试失败');
-        
-        // 截图
-        const { data } = await Page.captureScreenshot();
-        fs.writeFileSync('extension_test_screenshot.png', Buffer.from(data, 'base64'));
-        console.log('📸 截图已保存');
-        
-    } catch (e) {
-        console.error('❌ 错误:', e.message);
-    } finally {
-        if (client) await client.close();
-        process.exit(0);
-    }
-})();
-"@
+| 层级 | 技术选型 | 产出 |
+|------|---------|------|
+| 游戏引擎 | Unity 2022.3 / Python 3 / H5+Capacitor | APK 22MB / 1129行控制台 / Web |
+| UI 引擎 | FairyGUI / UGUI Canvas 2D / HTML+CSS | 6包51组件 |
+| 渲染 | Built-in RP / Canvas 2D / WebGL | 三套渲染管线 |
+| 音频 | Unity Audio / Web Audio | 双引擎音频 |
+| 网络 | Photon / Mirror / WebSocket | 实时联机 |
+| 后端 | Python FastAPI + PostgreSQL + Redis | REST API |
+| CI/CD | GitHub Actions | 自动构建 + 测试 |
+| 容器化 | Docker + Docker Compose | 一键部署 |
+| 监控 | ELK + Grafana + Loki + Prometheus | 全栈可观测 |
+| 测试 | Pytest + Vitest + Unity Test Framework | 三层测试 |
 
-$cdpScriptFile = "$env:TEMP\cdp_test.js"
-$cdpScript | Set-Content $cdpScriptFile -Encoding UTF8
+## 构建目标
 
-try {
-    node $cdpScriptFile
-} catch {
-    Write-Host "  ⚠ CDP 测试需要 Node.js 和 chrome-remote-interface" -ForegroundColor Yellow
-    Write-Host "  安装: npm install -g chrome-remote-interface" -ForegroundColor Yellow
-    
-    # 降级: 使用 PowerShell WebClient 直接测试 HTTP
-    Write-Host "  降级为 HTTP 测试..." -ForegroundColor Yellow
-    try {
-        $response = Invoke-WebRequest -Uri "http://localhost:$debugPort/json" -UseBasicParsing
-        $tabs = $response.Content | ConvertFrom-Json
-        Write-Host "  ✅ 调试端口响应，发现 $($tabs.Count) 个标签页" -ForegroundColor Green
-    } catch {
-        Write-Host "  ❌ 无法连接到调试端口" -ForegroundColor Red
-    }
-}
+| 平台 | 格式 | 要求 |
+|------|------|------|
+| Android | APK | ≥ 1GB（含资源包） |
+| WebGL | Gzip HTML | ≤ 20MB |
+| Windows | EXE | ≥ 500MB |
 
-# 5. 清理
-Write-Host "`n[5/5] 清理..." -ForegroundColor Yellow
-if ($proc -and -not $proc.HasExited) {
-    $proc.Kill()
-    Write-Host "  ✅ Chrome 进程已关闭" -ForegroundColor Green
-}
+## 数据驱动
 
-Write-Host "`n测试完成！" -ForegroundColor Cyan
+所有游戏数据由 `config/card-library/` 下的 6 个 JSON 文件驱动，三套引擎统一消费：
+
+```
+卡牌分类库 (JSON)
+    ├──→ Unity     → CardData.cs       (Resources.Load)
+    ├──→ Python    → card_loader.py    (json.load)
+    └──→ Web       → card-data.ts      (import / fetch)
+```
+
+修改 JSON 即同步生效到全部引擎。
+
+## 运维架构
+
+```
+Git Push → GitHub Actions
+    ├── Pytest（Python 测试）
+    ├── Vitest（Node 测试）
+    ├── Unity Build（Android + WebGL）
+    └── Docker Build & Push
+            ↓
+      Docker Compose 部署
+            ↓
+  ┌── ELK（日志分析）
+  ├── Grafana（可视化面板）
+  ├── Loki（日志聚合）
+  └── Prometheus（指标采集）
+```
+
+## 贡献
+
+欢迎提 Issue 和 PR。提交前请确保通过验证门禁。
+
+## 许可
