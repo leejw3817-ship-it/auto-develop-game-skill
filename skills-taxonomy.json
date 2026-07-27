@@ -1,0 +1,173 @@
+# ============================================================
+# 校园杀 · 运维监控栈安装脚本（Docker Compose）
+# 功能：一键部署 ELK + Grafana + Loki + Prometheus 监控栈
+# 前置：需先安装 Docker Desktop
+# ============================================================
+
+Write-Host "=== 校园杀 运维监控栈部署 ===" -ForegroundColor Cyan
+Write-Host ""
+
+# 检查 Docker
+$dockerVer = docker --version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host " Docker Desktop 未安装！" -ForegroundColor Red
+    Write-Host "========================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "请按以下步骤安装 Docker Desktop：" -ForegroundColor Yellow
+    Write-Host "  1. 打开浏览器访问 https://www.docker.com/products/docker-desktop/"
+    Write-Host "  2. 下载 Windows 版并安装（需管理员权限）"
+    Write-Host "  3. 安装完成后重启电脑"
+    Write-Host "  4. 启动 Docker Desktop，等待右下角鲸鱼图标变为稳定状态"
+    Write-Host "  5. 重新运行本脚本"
+    Write-Host ""
+    Write-Host "是否现在打开 Docker Desktop 下载页面？"
+    $choice = Read-Host "输入 y 打开 / 按任意键跳过"
+    if ($choice -eq 'y') {
+        Start-Process "https://www.docker.com/products/docker-desktop/"
+    }
+    exit 1
+}
+Write-Host "[OK] $dockerVer" -ForegroundColor Green
+
+# 检查 docker-compose
+$composeVer = docker compose version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[错误] docker compose 不可用，请确认 Docker Desktop 版本 >= 3.0" -ForegroundColor Red
+    exit 1
+}
+Write-Host "[OK] $composeVer" -ForegroundColor Green
+
+# 创建 docker-compose.yml
+$composeDir = "$env:TEMP\campus-kill-ops"
+New-Item -ItemType Directory -Force -Path $composeDir | Out-Null
+
+$dockerCompose = @'
+version: "3.8"
+services:
+  # === Loki 日志聚合 ===
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: campus-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+
+  # === Promtail 日志采集代理 ===
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: campus-promtail
+    depends_on:
+      - loki
+    volumes:
+      - /var/log:/var/log:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+
+  # === Grafana 可视化面板 ===
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: campus-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=campuskill2024
+      - GF_INSTALL_PLUGINS=grafana-lokidatasource
+    depends_on:
+      - loki
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana-dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana-datasources:/etc/grafana/provisioning/datasources:ro
+
+  # === Elasticsearch（日志存储与搜索）===
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: campus-elastic
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
+  # === Kibana（日志可视化）===
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.0
+    container_name: campus-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+
+volumes:
+  loki-data:
+  grafana-data:
+  es-data:
+'@
+
+$dockerCompose | Out-File -FilePath "$composeDir\docker-compose.yml" -Encoding UTF8
+
+# 创建 Promtail 配置
+$promtailConfig = @'
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: campus_logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: campus-kill
+          __path__: /var/log/campus/*.log
+'@
+$promtailConfig | Out-File -FilePath "$composeDir\promtail-config.yml" -Encoding UTF8
+
+# 创建 Grafana 数据源配置
+$dsDir = "$composeDir\grafana-datasources"
+New-Item -ItemType Directory -Force -Path $dsDir | Out-Null
+$lokiDS = @'
+apiVersion: 1
+datasources:
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: true
+  - name: Elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+'@
+$lokiDS | Out-File -FilePath "$dsDir\datasources.yml" -Encoding UTF8
+
+# 启动
+Write-Host ""
+Write-Host ">>> 启动运维监控栈..." -ForegroundColor Yellow
+Push-Location $composeDir
+docker compose up -d 2>&1
+if ($LASTEXITCODE -eq 0) {
+    Write-Host ""
+    Write-Host "=== 监控栈启动成功！ ===" -ForegroundColor Green
+    Write-Host "  Grafana:    http://localhost:3000  (admin / campuskill2024)" -ForegroundColor Cyan
+    Write-Host "  Kibana:     http://localhost:5601" -ForegroundColor Cyan
+    Write-Host "  Loki API:   http://localhost:3100" -ForegroundColor Cyan
+    Write-Host "  ES API:     http://localhost:9200" -ForegroundColor Cyan
+    Write-Host "  Compose 目录: $composeDir" -ForegroundColor DarkGray
+} else {
+    Write-Host "[失败] 容器启动失败，请检查 Docker Desktop 运行状态" -ForegroundColor Red
+}
+Pop-Location

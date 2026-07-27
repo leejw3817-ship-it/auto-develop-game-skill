@@ -1,0 +1,48 @@
+@echo off
+chcp 65001 >nul
+echo ========================================
+echo   校园杀 · 全部依赖一键安装
+echo   顺序：Python → Node.js → Unity验证 → 运维栈
+echo ========================================
+echo.
+
+set "SCRIPT_DIR=%~dp0"
+
+echo [1/4] Python 依赖（pytest / book-to-skill / requests / rich）
+echo ----------------------------------------
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%install-python-deps.ps1"
+if %errorlevel% neq 0 (
+    echo [警告] Python 依赖安装有问题，继续下一项...
+)
+echo.
+
+echo [2/4] Node.js 依赖（Vite / Capacitor / Vitest / game项目）
+echo ----------------------------------------
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%install-node-deps.ps1"
+if %errorlevel% neq 0 (
+    echo [警告] Node.js 依赖安装有问题，继续下一项...
+)
+echo.
+
+echo [3/4] Unity 构建模块验证
+echo ----------------------------------------
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%verify-unity-modules.ps1"
+if %errorlevel% neq 0 (
+    echo [警告] Unity 模块验证有问题，继续下一项...
+)
+echo.
+
+echo [4/4] 运维监控栈（Docker + ELK + Grafana + Loki）
+echo ----------------------------------------
+powershell -ExecutionPolicy Bypass -File "%SCRIPT_DIR%install-ops-monitoring.ps1"
+if %errorlevel% neq 0 (
+    echo [提示] 运维栈需要 Docker Desktop，可稍后手动安装
+)
+echo.
+
+echo ========================================
+echo   全部安装流程完成！
+echo   - 如有红色 [失败] 项，请检查对应环境
+echo   - Docker Desktop 需手动下载安装后重跑 install-ops-monitoring.ps1
+echo ========================================
+pause

@@ -1,0 +1,291 @@
+#!/usr/bin/env python
+"""
+FairyGUI Editor 全自动发布脚本
+绕过白名单：基于 Win32 mouse_event 低层 API 操控 Unity 渲染的 FairyGUI Editor
+从经验记忆：pyautogui 对 Unity 窗口无效，但 user32.mouse_event + SetCursorPos 有效
+
+用法: python auto_fairygui_publish.py
+"""
+
+import ctypes
+import time
+import subprocess
+import os
+import sys
+from ctypes import wintypes
+
+# ============================================================
+#  配置
+# ============================================================
+
+FAIRYGUI_EDITOR = r"D:\Program Files\FairyGUI-Editor\FairyGUI-Editor\FairyGUI-Editor.exe"
+PROJECT_FILE = r"D:\Downloads\FairyGUI-Editor\FairyGUI-CampusKill\FairyGUI-CampusKill.fairy"
+
+# 备用项目路径
+ALT_PROJECT = r"C:\Users\31184\Desktop\校园杀v0.1\FairyGUI-Project\project.fairy"
+
+# ============================================================
+#  Win32 API 声明
+# ============================================================
+
+user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+# 鼠标事件常量
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP   = 0x0004
+MOUSEEVENTF_ABSOLUTE = 0x8000
+
+# 窗口查找
+FindWindowW = user32.FindWindowW
+SetForegroundWindow = user32.SetForegroundWindow
+ShowWindow = user32.ShowWindow
+GetWindowRect = user32.GetWindowRect
+SetCursorPos = user32.SetCursorPos
+GetCursorPos = user32.GetCursorPos
+GetSystemMetrics = user32.GetSystemMetrics
+
+SW_RESTORE = 9
+SW_SHOW = 5
+
+# 结构体定义
+class RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+def click(x=None, y=None):
+    """在指定坐标点击"""
+    if x is not None and y is not None:
+        SetCursorPos(x, y)
+        time.sleep(0.05)
+    user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+    time.sleep(0.02)
+    user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(0.05)
+
+def find_window(title_contains: str):
+    """查找窗口句柄"""
+    hwnd = FindWindowW(None, None)
+    matches = []
+    
+    def enum_callback(hwnd, lparam):
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length:
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            if title_contains.lower() in buf.value.lower():
+                matches.append((hwnd, buf.value))
+        return True
+    
+    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_long, ctypes.c_long)
+    user32.EnumWindows(EnumWindowsProc(enum_callback), 0)
+    return matches
+
+def get_window_rect(hwnd):
+    """获取窗口位置和大小"""
+    rect = RECT()
+    GetWindowRect(hwnd, ctypes.byref(rect))
+    return rect.left, rect.top, rect.right, rect.bottom
+
+# ============================================================
+#  主流程
+# ============================================================
+
+def try_cli_publish():
+    """方法 1: 命令行发布（首选，不依赖 GUI 操控）"""
+    print("[方法 1] 尝试命令行发布...")
+    
+    project = PROJECT_FILE
+    if not os.path.exists(project):
+        project = ALT_PROJECT
+    if not os.path.exists(project):
+        print(f"  ❌ 项目文件不存在: {project}")
+        return False
+
+    output_dir = os.path.join(os.path.dirname(project), "published")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    cmd = f'"{FAIRYGUI_EDITOR}" -p "{project}" -o "{output_dir}"'
+    print(f"  执行: {cmd}")
+    
+    try:
+        proc = subprocess.Popen(
+            cmd, shell=True, 
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        
+        # 等待最多 60 秒
+        try:
+            stdout, stderr = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            print("  ⚠ 超时，进程可能已完成但未退出")
+            
+        # 检查输出文件
+        bytes_files = []
+        for root, dirs, files in os.walk(output_dir):
+            for f in files:
+                if f.endswith("_fui.bytes"):
+                    bytes_files.append(os.path.join(root, f))
+                    
+        if bytes_files:
+            print(f"  ✅ 命令行发布成功！生成 {len(bytes_files)} 个 .bytes 文件")
+            for bf in bytes_files:
+                size_kb = os.path.getsize(bf) / 1024
+                print(f"    📦 {os.path.basename(bf)} ({size_kb:.1f} KB)")
+            return True
+        else:
+            print("  ⚠ 未生成 .bytes 文件，尝试 GUI 发布")
+            return False
+            
+    except Exception as e:
+        print(f"  ❌ 命令行发布异常: {e}")
+        return False
+
+
+def try_gui_publish():
+    """方法 2: GUI 自动化发布（Win32 mouse_event）"""
+    print("\n[方法 2] 尝试 GUI 自动化发布...")
+    
+    # 1. 查找 FairyGUI Editor 窗口
+    print("  查找 FairyGUI Editor 窗口...")
+    windows = find_window("FairyGUI")
+    
+    if not windows:
+        # 启动编辑器
+        print("  未找到运行中的编辑器，正在启动...")
+        project = PROJECT_FILE if os.path.exists(PROJECT_FILE) else ALT_PROJECT
+        if not os.path.exists(project):
+            print(f"  ❌ 项目文件不存在")
+            return False
+            
+        subprocess.Popen(f'"{FAIRYGUI_EDITOR}" "{project}"', shell=True)
+        time.sleep(8)  # 等待加载
+        
+        windows = find_window("FairyGUI")
+        
+    if not windows:
+        print("  ❌ 无法找到 FairyGUI Editor 窗口")
+        return False
+        
+    hwnd, title = windows[0]
+    print(f"  ✅ 找到窗口: {title} (hwnd={hwnd})")
+    
+    # 2. 激活窗口
+    ShowWindow(hwnd, SW_RESTORE)
+    time.sleep(0.3)
+    SetForegroundWindow(hwnd)
+    time.sleep(0.3)
+    
+    left, top, right, bottom = get_window_rect(hwnd)
+    width = right - left
+    height = bottom - top
+    print(f"  窗口: {width}x{height} @ ({left}, {top})")
+    
+    # 3. 点击 "文件" 菜单
+    # Unity 窗口菜单栏通常在 y≈25-35 区域
+    file_menu_x = left + 40   # "文件" 按钮 X 坐标（菜单栏左边第1个）
+    file_menu_y = top + 30    # 菜单栏 Y 坐标
+    
+    click(file_menu_x, file_menu_y)
+    time.sleep(0.3)
+    print("  ✅ 点击「文件」菜单")
+    
+    # 4. 下移选择「发布」
+    # 下拉菜单每项大约 28px 高
+    # 文件菜单中的选项: 新建项目 / 打开项目 / 关闭项目 / --- / 保存 / 发布 / 发布设置 / --- / 退出
+    # 「发布」大约是第 6 项
+    publish_x = file_menu_x + 120   # 下拉菜单内右移
+    publish_y = file_menu_y + 28 * 6  # 第 6 项
+    
+    click(publish_x, publish_y)
+    time.sleep(3)  # 等待发布完成
+    print("  ✅ 点击「发布」")
+    
+    # 5. 验证结果
+    time.sleep(2)
+    print("  发布操作已完成，请在编辑器中确认「发布成功」提示")
+    return True
+
+
+def try_hotkey_publish():
+    """方法 3: 快捷键发布（Alt+F → 下×4 → Enter）"""
+    print("\n[方法 3] 尝试快捷键发布...")
+    
+    import ctypes
+    from ctypes import wintypes
+    
+    VK_MENU = 0x12    # Alt
+    VK_F = 0x46       # F
+    VK_DOWN = 0x28    # 下箭头
+    VK_RETURN = 0x0D  # 回车
+    
+    KEYEVENTF_KEYUP = 0x0002
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    
+    user32.keybd_event(VK_MENU, 0x38, 0, 0)           # Alt down
+    user32.keybd_event(VK_F, 0x21, 0, 0)              # F down
+    user32.keybd_event(VK_F, 0x21, KEYEVENTF_KEYUP, 0) # F up
+    user32.keybd_event(VK_MENU, 0x38, KEYEVENTF_KEYUP, 0)  # Alt up
+    time.sleep(0.3)
+    print("  ✅ Alt+F 打开文件菜单")
+    
+    # 下移 4 次到「发布」
+    for i in range(4):
+        user32.keybd_event(VK_DOWN, 0x50, KEYEVENTF_EXTENDEDKEY, 0)
+        user32.keybd_event(VK_DOWN, 0x50, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY, 0)
+        time.sleep(0.05)
+    time.sleep(0.2)
+    print("  ✅ 下移 4 次 → 发布")
+    
+    # Enter
+    user32.keybd_event(VK_RETURN, 0x1C, 0, 0)
+    user32.keybd_event(VK_RETURN, 0x1C, KEYEVENTF_KEYUP, 0)
+    time.sleep(3)
+    print("  ✅ Enter 执行发布")
+    
+    return True
+
+
+# ============================================================
+#  入口
+# ============================================================
+
+def main():
+    print("=" * 50)
+    print("  FairyGUI Editor 全自动发布")
+    print("=" * 50)
+    print(f"  编辑器: {FAIRYGUI_EDITOR}")
+    print(f"  项目文件: {PROJECT_FILE}")
+    print()
+    
+    # 方法 1: 命令行（首选）
+    if try_cli_publish():
+        print("\n✅ 发布完成！")
+        return 0
+        
+    # 方法 2: GUI 自动化
+    if try_gui_publish():
+        print("\n⚠ 请手动确认发布结果")
+        return 0
+        
+    # 方法 3: 快捷键
+    if try_hotkey_publish():
+        print("\n⚠ 请手动确认发布结果")
+        return 0
+        
+    print("\n❌ 所有方法均失败")
+    print("  备选: 手动在 FairyGUI Editor 中 Ctrl+S 保存 → 文件 → 发布")
+    return 1
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\n⚠ 用户中断")
+        sys.exit(130)

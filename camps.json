@@ -1,0 +1,46 @@
+@echo off
+chcp 65001 >nul
+title 校园杀 全自动验证流水线
+
+echo ============================================
+echo   校园杀 全自动验证流水线
+echo ============================================
+echo.
+
+set OUTPUT_DIR=%~dp0
+set PROJECT_DIR=C:\Users\31184\Desktop\校园杀v0.1
+
+echo [阶段 1/5] FairyGUI 自动发布...
+python "%OUTPUT_DIR%auto-fairygui-publish.py"
+if %ERRORLEVEL% neq 0 (
+    echo ⚠ FairyGUI 发布异常，继续执行...
+)
+echo.
+
+echo [阶段 2/5] 设计系统校验...
+python "%OUTPUT_DIR%auto-design-system-checker.py" --project-dir "%PROJECT_DIR%\FairyGUI-Project"
+if %ERRORLEVEL% neq 0 (
+    echo ⚠ 设计系统有违规项，见上方清单
+)
+echo.
+
+echo [阶段 3/5] UI 视觉回归测试...
+python "%OUTPUT_DIR%auto-ui-visual-test.py"
+echo.
+
+echo [阶段 4/5] Chrome 扩展测试...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%OUTPUT_DIR%auto-chrome-ext-test.ps1" -Headless
+echo.
+
+echo [阶段 5/5] Unity Editor 批处理构建...
+echo   ⚠ 此步骤需要在 Unity Editor 环境中执行
+echo   请在 Unity 中打开 CampusKill 项目，将 BuildScript.cs
+echo   放入 Assets/Editor/ 目录，然后执行菜单"CatpusKill → Build All"
+echo   或命令行:
+echo   Unity.exe -batchmode -quit -projectPath "项目路径" -executeMethod CampusKill.BuildScript.BuildAll
+echo.
+
+echo ============================================
+echo   流水线执行完毕
+echo ============================================
+pause

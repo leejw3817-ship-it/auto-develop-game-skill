@@ -1,0 +1,65 @@
+# ============================================================
+# 校园杀 · Node.js 依赖自动安装脚本
+# 功能：安装 Vite、Capacitor CLI、Vitest 及 book-to-skill/game 依赖
+# ============================================================
+
+Write-Host "=== 校园杀 Node.js 依赖安装 ===" -ForegroundColor Cyan
+Write-Host ""
+
+# 检查 Node.js
+$nodeVer = node --version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[错误] Node.js 未安装，请从 https://nodejs.org 下载安装 LTS 版" -ForegroundColor Red
+    exit 1
+}
+Write-Host "[OK] Node.js $nodeVer" -ForegroundColor Green
+
+$npmVer = npm --version 2>&1
+Write-Host "[OK] npm v$npmVer" -ForegroundColor Green
+
+# 全局安装 Vite
+Write-Host ">>> 全局安装 Vite..." -ForegroundColor Yellow
+npm install -g vite 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    $viteVer = npx vite --version 2>&1
+    Write-Host "[OK] Vite $viteVer" -ForegroundColor Green
+} else {
+    Write-Host "[失败] Vite 安装失败" -ForegroundColor Red
+}
+
+# 全局安装 Capacitor CLI
+Write-Host ">>> 全局安装 Capacitor CLI..." -ForegroundColor Yellow
+npm install -g @capacitor/cli @capacitor/core @capacitor/android 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[OK] Capacitor CLI 已安装" -ForegroundColor Green
+} else {
+    Write-Host "[失败] Capacitor CLI 安装失败" -ForegroundColor Red
+}
+
+# 全局安装 Vitest
+Write-Host ">>> 全局安装 Vitest..." -ForegroundColor Yellow
+npm install -g vitest 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "[OK] Vitest 已安装" -ForegroundColor Green
+} else {
+    Write-Host "[失败] Vitest 安装失败" -ForegroundColor Red
+}
+
+# 安装 book-to-skill/game 目录的项目依赖
+$gameDir = "C:\Users\31184\Desktop\校园杀v0.1\book-to-skill-1.2.0\game"
+if (Test-Path "$gameDir\package.json") {
+    Write-Host ">>> 安装 game/ 项目依赖..." -ForegroundColor Yellow
+    Push-Location $gameDir
+    npm install 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[OK] game/ 项目依赖安装完成" -ForegroundColor Green
+    } else {
+        Write-Host "[警告] game/ 项目依赖安装失败，可稍后重试" -ForegroundColor Yellow
+    }
+    Pop-Location
+} else {
+    Write-Host "[跳过] game/package.json 不存在" -ForegroundColor Yellow
+}
+
+Write-Host ""
+Write-Host "=== Node.js 依赖安装完成 ===" -ForegroundColor Cyan
